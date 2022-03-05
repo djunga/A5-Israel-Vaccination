@@ -1,0 +1,200 @@
+
+---
+title: "COVID-19 Vaccination in Israel 2021"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+### Load required libraries.
+```{r}
+library(tidyr)
+library(dplyr)
+library(stringr)
+
+```
+
+[COVID-19 Vaccination in Israel](https://en.wikipedia.org/wiki/COVID-19_vaccination_in_Israel)
+
+This Wikipedia link provides some high level information about COVID-19 vaccination in Israel. It will come in handy as we come answer questions.
+
+###  Read CSV data source.
+```{r}
+filename <- "https://raw.githubusercontent.com/djunga/A5-Israel-Vaccination/main/israelvax.csv"
+res <- read.csv(filename, header=TRUE)
+res
+```
+
+Note that this data is about August 2021.
+
+From the start, we notice a few things: 
+
+* There are 2 age categories: <50 and >50. Where is =50? We are given that <50 includes those aged 50 in the description, but the column name should change to reflect that.
+* The columns are improperly named.
+* The first row contains variable names, not values.
+
+Do the row percentages sum to 100?
+```{r}
+perc <- slice(res, c(3,5))
+perc <- gsub('%|\\"|[c(]|)|[,\\s+]', '', perc)[2:3] #gsub('%|\\"', '', perc)
+perc <- as.numeric(unlist(str_split(perc, " ")))
+print(perc[1] + perc[3])
+print(perc[2] + perc[4])
+```
+Neither the `Population Not Vax %` nor the `Population Fully Vax %` for `<50` and `>50` sum to to 100. There is at least 1 possible explanation for this: The data omits data on people who are partially vaccinated.
+
+> "On 29 July 2021, Israel's Prime Minister announced that the country was rolling out a third dose of the Pfizer-BioNTech vaccine to people over the age of 60, based on the data that suggested significant waning immunity from infection over time for those with two doses."
+
+> "On 29 August 2021, Israel's coronavirus czar announced that Israelis who had not received a booster shot within six months of their second dose would lose access to the country's green pass vaccine passport."
+
+We can conclude 2 things from these statements:
+
+1. 3 doses qualified as 'fully vaccinated'.
+2. People over 60 were able to get a 3rd dose starting on July 29, while those who were younger could start at some later date.There was a time delay between availability.
+
+We will assume that the omitted percentages represent people who are partially vaccinated. Below, we will clean the data and fill in information about partially vaccinated people.
+
+### Drop the 1st row, since it's redundant.
+```{r}
+res <- res %>% 
+  filter(!row_number() %in% c(1))
+```
+
+### Change the column names to make the next step easier.
+```{r}
+names <- c("Age", "NotVax", "FullyVax", "NotVax100", "FullyVax100", "Efficacy")
+colnames(res) <- names
+```
+
+
+### Make it clear that the `<50` age group includes people that are age 50.
+```{r}
+res[1,1] <- "<=50" 
+```
+
+
+### Alter the dataframe to remove commas in numbers.
+```{r}
+res[2,] <- c(0, perc[1], perc[3], 0, 0, 0) 
+res[4,] <- c(0, perc[2], perc[4], 0, 0, 0) 
+
+counts <- slice(res, c(1,3))[2]    # notvax count
+counts <- gsub(',|[c(]|)|\\"', '', counts)
+counts <- as.numeric(unlist(str_split(counts, " ")))
+res[1,2] = counts[1]
+res[3,2] = counts[2]
+
+counts <- slice(res, c(1,3))[3]
+counts <- gsub(',|[c(]|)|\\"', '', counts)
+counts <- as.numeric(unlist(str_split(counts, " ")))
+res[1,3] = counts[1]
+res[3,3] = counts[2]
+
+```
+
+### Convert columns (besides `Age`) to numerical type.
+```{r}
+res[2:6] <- as.numeric(unlist(res[2:6]))
+res1 <- res
+```
+
+### Calculate the partially vaccinated populations.
+```{r}
+# percentages
+res1[2,7] <- (100.0 - (res1[2,2] + res1[2,3]))
+res1[4,7] <- (100.0 - (res1[4,2] + res1[4,3]))
+
+# counts
+under50partially <- (res1[2,7]/100) *  res1[1,3]/(res1[2,3]/100)   # (3.7/100) * 3501118/(73/100)
+over50partially <- (res1[4,7]/100) *  res1[3,3]/(res1[4,3]/100)
+
+res1[1,7] <- under50partially
+res1[3,7] <- over50partially
+```
+
+### Tidy the data.
+```{r}
+df <- data.frame(Age=character(),
+                 `NotVaxPerc` = double(), 
+                 `NotVaxCount` = integer(), 
+                 `PartiallyVaxPerc` = double(),
+                 `PartiallyVaxCount` = integer(),
+                 `FullyVaxPerc` = double(),
+                 `FullyVaxCount` = integer(), 
+                 `SevereNoVaxPer100K` = integer(),
+                 `SevereFullyVaxPer100K` = integer(), 
+                 `EfficacyvsSevereDisease` = double()
+                 )
+
+df <- df %>% 
+   add_row(Age=res1[1,1],
+           `NotVaxPerc` = res1[2,2], 
+           `NotVaxCount` = res1[1,2], 
+           `PartiallyVaxPerc` = res1[2,7],
+           `PartiallyVaxCount` = res1[1,7],
+           `FullyVaxPerc` = res1[2,3],
+           `FullyVaxCount` = res1[1,3], 
+           `SevereNoVaxPer100K` = res1[1,4],
+           `SevereFullyVaxPer100K` = res1[1,5], 
+           `EfficacyvsSevereDisease` = 0       
+           )
+
+df <- df %>% 
+   add_row(Age=res1[3,1],
+           `NotVaxPerc` = res1[4,2], 
+           `NotVaxCount` = res1[3,2], 
+           `PartiallyVaxPerc` = res1[4,7],
+           `PartiallyVaxCount` = res1[3,7],
+           `FullyVaxPerc` = res1[4,3],
+           `FullyVaxCount` = res1[3,3], 
+           `SevereNoVaxPer100K` = res1[3,4],
+           `SevereFullyVaxPer100K` = res1[3,5], 
+           `EfficacyvsSevereDisease` = 0       
+           )
+df
+
+```
+
+
+### Calculate Efficacy vs Severe Disease for both age groups.
+
+*Efficacy = 1 - (% fully vaxed severe cases per 100K / % not vaxed severe cases per 100K)*
+```{r}
+totalsevereunder50 <- df[1,9] + df[1,8]
+df[1,10] <- 1 - ((df[1,9]/totalsevereunder50) / (df[1,8]/totalsevereunder50))
+
+totalsevereover50 <- df[2,9] + df[2,8]
+df[2,10] <- 1 - ((df[2,9]/totalsevereover50) / (df[2,8]/totalsevereover50))
+
+df
+
+```
+
+
+For the population age 50 and under, the vaccine is 74.4% efficacious against severe cases. For the population over age 50, the vaccine is -69.6% efficacious against severe cases. Since the value is negative, this suggests that the vaccine may be associated with severe cases for this age group.
+
+
+### Is there enough information to calculate the total population?
+Ideally, the sum of the populations of those who have not been vaccinated, have been partially vaccinated, and have been fully vaccinated should equal the population of Israel.
+```{r}
+estimatedpop <- sum(df[3], df[5], df[7])
+estimatedpop
+```
+
+
+Note that the data is from August 2021. Who was eligible for the vaccine in Israel at that point in time?
+
+> On 10 November 2021, the Israeli Government approved the use of COVID-19 vaccine shots for children between the ages of 5 and 11 years. Israeli epidemiologists and health authorities have identified vaccine hesitancy among parents as an obstacle to getting children vaccinated.
+
+From this information, we know that a population within the under 50 age group, age 5-11, could not get vaccinated as of August 2021. Were they included in the given data? To answer this, we can Google the population of Israel in 2021. It was 9.45 million. This does not equal the population sum we calculated earlier. 
+
+```{r}
+9450000 - estimatedpop
+```
+
+This is the number of people unaccounted for in the data. It is likely the number of people age 5-11 in Israel. Therefore, the given data was not enough to calculate the total population.
+
+
+
+
